@@ -18,7 +18,7 @@ export default function ProgressBar({
         return () => {
             clearInterval(interval);
         };
-    }, [paused, ontimeupdate]);
+    }, [paused, onTimeUpdate]);
 
     return (
         <div onMouseEnter={onPause} onMouseLeave={onResume}>

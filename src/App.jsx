@@ -1,89 +1,109 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+
 import Places from "./components/Places.jsx";
-import { AVAILABLE_PLACES } from "./data.js";
 import Modal from "./components/Modal.jsx";
 import DeleteConfirmation from "./components/DeleteConfirmation.jsx";
-
-import { sortPlacesByDistance } from "./loc.js";
+import AvailablePlaces from "./components/AvailablePlaces.jsx";
+import { fetchUserPlaces, updateUserPlaces } from "./http.js";
+import ErrorPage from "./components/ErrorPage.jsx";
 import Header from "./components/Header.jsx";
 
 function App() {
-    // const modal = useRef();
     const selectedPlace = useRef();
+    fetchUserPlaces;
+
+    const [userPlaces, setUserPlaces] = useState([]);
+    const [isFetching, setIsFetching] = useState(false);
+    const [error, setError] = useState();
+    const [errorUpdatingPlaces, setErrorUpdatingPlaces] = useState();
 
     const [modalIsOpen, setModalIsOpen] = useState(false);
 
-    const [pickedPlaces, setPickedPlaces] = useState(() => {
-        const storedIds =
-            JSON.parse(localStorage.getItem("selectedPlaces")) || [];
-        return storedIds
-            .map((id) => AVAILABLE_PLACES.find((place) => place.id === id))
-            .filter((place) => place);
-    });
-
-    const [availablePlaces, setAvailablePlaces] = useState([]);
-
     useEffect(() => {
-        navigator.geolocation.getCurrentPosition(
-            (position) => {
-                const sortedPlaces = sortPlacesByDistance(
-                    AVAILABLE_PLACES,
-                    position.coords.latitude,
-                    position.coords.longitude
-                );
-
-                setAvailablePlaces(sortedPlaces);
-            },
-            (error) => {
-                console.error("Geolocation error:", error);
-                setAvailablePlaces(AVAILABLE_PLACES); // Fallback to unsorted places
+        async function fetchPlaces() {
+            setIsFetching(true);
+            try {
+                const places = await fetchUserPlaces();
+                setUserPlaces(places);
+            } catch (error) {
+                setError({
+                    message: error.message || "Failed to fetch user places.",
+                });
             }
-        );
+
+            setIsFetching(false);
+        }
+
+        fetchPlaces();
     }, []);
 
-    function updateLocalStorage(pickedPlaces) {
-        const ids = pickedPlaces.map((place) => place.id);
-        localStorage.setItem("selectedPlaces", JSON.stringify(ids));
-    }
-
-    function handleStartRemovePlace(id) {
-        // modal.current.open();
+    function handleStartRemovePlace(place) {
         setModalIsOpen(true);
-        selectedPlace.current = id;
+        selectedPlace.current = place;
     }
 
     function handleStopRemovePlace() {
-        // modal.current.close();
         setModalIsOpen(false);
     }
 
-    function handleSelectPlace(id) {
-        setPickedPlaces((prevPickedPlaces) => {
-            if (prevPickedPlaces.some((place) => place.id === id)) {
-                console.warn("Place already picked: ", id);
+    async function handleSelectPlace(selectedPlace) {
+        setUserPlaces((prevPickedPlaces) => {
+            if (
+                prevPickedPlaces.some((place) => place.id === selectedPlace.id)
+            ) {
                 return prevPickedPlaces;
             }
-            const newPlace = AVAILABLE_PLACES.find((place) => place.id === id);
-            const updatedPlaces = [newPlace, ...prevPickedPlaces];
-            updateLocalStorage(updatedPlaces);
-            return updatedPlaces;
+            return [selectedPlace, ...prevPickedPlaces];
         });
+
+        try {
+            const updatedPlaces = [...userPlaces, selectedPlace];
+            await updateUserPlaces(updatedPlaces);
+        } catch (error) {
+            setUserPlaces(userPlaces);
+            setErrorUpdatingPlaces({
+                message: error.message || "Failed to update places.",
+            });
+        }
     }
 
-    const handleRemovePlace = useCallback(() => {
-        setPickedPlaces((prevPickedPlaces) => {
-            const updatedPlaces = prevPickedPlaces.filter(
-                (place) => place.id !== selectedPlace.current
+    const handleRemovePlace = useCallback(
+        async function handleRemovePlace() {
+            const updatedPlaces = userPlaces.filter(
+                (place) => place.id !== selectedPlace.current.id
             );
-            updateLocalStorage(updatedPlaces);
-            return updatedPlaces;
-        });
-        // modal.current.close();
-        setModalIsOpen(false);
-    }, []);
+
+            setUserPlaces(updatedPlaces);
+
+            try {
+                await updateUserPlaces(updatedPlaces);
+            } catch (error) {
+                setUserPlaces(userPlaces);
+                setErrorUpdatingPlaces({
+                    message: error.message || "failed to delete place.",
+                });
+            }
+
+            setModalIsOpen(false);
+        },
+        [userPlaces]
+    );
+
+    function handleError() {
+        setErrorUpdatingPlaces(null);
+    }
 
     return (
         <>
+            <Modal open={errorUpdatingPlaces} onClose={handleError}>
+                {errorUpdatingPlaces && (
+                    <ErrorPage
+                        title="An error occurred"
+                        message={errorUpdatingPlaces.message}
+                        onConfirm={handleError}
+                    />
+                )}
+            </Modal>
             <Modal open={modalIsOpen} onClose={handleStopRemovePlace}>
                 <DeleteConfirmation
                     onCancel={handleStopRemovePlace}
@@ -91,27 +111,26 @@ function App() {
                     autoConfirmTime={4000}
                 />
             </Modal>
-            <Header />
 
+            <Header />
             <main>
-                <Places
-                    title="I'd like to visit ..."
-                    fallbackText={
-                        "Select the places you would like to visit below."
-                    }
-                    places={pickedPlaces}
-                    onSelectPlace={handleStartRemovePlace}
-                />
-                <Places
-                    title="Available Places"
-                    places={availablePlaces}
-                    fallbackText={
-                        availablePlaces.length === 0
-                            ? "Loading..."
-                            : "Sorting places by distance..."
-                    }
-                    onSelectPlace={handleSelectPlace}
-                />
+                {error ? (
+                    <ErrorPage
+                        title="An error occurred!"
+                        message={error.message}
+                    />
+                ) : (
+                    <Places
+                        title="I'd like to visit ..."
+                        fallbackText="Select the places you would like to visit below."
+                        isLoading={isFetching}
+                        loadingText="Fetching your places..."
+                        places={userPlaces}
+                        onSelectPlace={handleStartRemovePlace}
+                    />
+                )}
+
+                <AvailablePlaces onSelectPlace={handleSelectPlace} />
             </main>
         </>
     );
